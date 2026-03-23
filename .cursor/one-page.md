@@ -150,8 +150,32 @@ bash requirements/install.sh embodied --model openvla --env maniskill_libero --u
 - [ ] 确定评估指标（成功率、收敛步数、样本效率曲线）
 - **交付物**：任务选定文档、基线运行脚本
 
-### Milestone 1: 倒放样本增广模块
+### Milestone 1: 倒放样本增广模块 [已完成]
 
+**目标**：提供一个数据管道，将纯成功的专家演示自动转化为包含"倒放负样本"的 PyTorch Dataset，供下游势能函数网络进行自监督对比学习。
+
+**产出**：
+
+| 产出物 | 路径 | 说明 |
+|--------|------|------|
+| 格式转换脚本 | `scripts/tmper/convert_h5_to_pkl.py` | 将 ManiSkill3 回放后的 `.h5` 轨迹文件转换为逐条 `.pkl` 文件 |
+| 倒放增广核心模块 | `rlinf/data/rewind_augmentation.py` | `rewind_augment_trajectory()` 函数 + `RewindAugmentedDataset` 类 |
+| 可视化调试脚本 | `scripts/tmper/visualize_rewind.py` | 将增广轨迹渲染为 `.mp4`，叠加 progress_step 和 FORWARD/REWIND 标识 |
+| 专家演示数据 | `data/demos/PickCube-v1/` | 10 条 PickCube-v1 成功轨迹（运动规划生成） |
+| 增广数据集 | `data/demos/PickCube-v1/augmented/` | 60 条增广轨迹（10 原始 + 50 倒放变体） |
+| 调试视频 | `data/demos/PickCube-v1/debug_rewind_*.mp4` | 原始轨迹 + 多条增广轨迹的渲染视频 |
+| 详细使用文档 | [.cursor/docs/1-rewind-aug.md](.cursor/docs/1-rewind-aug.md) | 含需求、原理、验收标准及完整开发教程 |
+
+**进度**：
+
+- [x] 使用 ManiSkill3 运动规划生成 10 条 PickCube-v1 成功轨迹（100% 成功率，平均 72.6 步）
+- [x] 回放轨迹提取 state 观测（42 维本体感知状态）
+- [x] 实现 `convert_h5_to_pkl.py`：H5 → 逐条 PKL（含 env_states 用于渲染）
+- [x] 实现 `rewind_augment_trajectory()`：切断点 + 倒放步数随机采样，生成带 `progress_step` 的增广序列
+- [x] 实现 `RewindAugmentedDataset`：封装为标准 `torch.utils.data.Dataset`，输出含全部 10 个必要字段
+- [x] 实现 `visualize_rewind.py`：通过 `set_state_dict` 恢复物理状态，渲染 mp4 并叠加进度标签
+- [x] 端到端冒烟测试通过：字段完整性、形状一致性、进度标签单调性、锚点正确性、traj_id 唯一性
+- [x] pre-commit (ruff lint + format) 通过
 
 ### Milestone 2: 训练reward模块
 
