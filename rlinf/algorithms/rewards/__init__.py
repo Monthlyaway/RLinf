@@ -12,11 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from rlinf.algorithms.rewards.code import CodeRewardOffline
-from rlinf.algorithms.rewards.math import MathReward
-from rlinf.algorithms.rewards.rstar2 import Rstar2Reward
-from rlinf.algorithms.rewards.searchr1 import SearchR1Reward
-from rlinf.algorithms.rewards.vqa import VQAReward
+import logging
+
+_logger = logging.getLogger(__name__)
 
 
 def register_reward(name: str, reward_class: type):
@@ -31,8 +29,40 @@ def get_reward_class(name: str):
 
 reward_registry = {}
 
-register_reward("math", MathReward)
-register_reward("vqa", VQAReward)
-register_reward("code_offline", CodeRewardOffline)
-register_reward("searchr1", SearchR1Reward)
-register_reward("rstar2", Rstar2Reward)
+# Reasoning reward modules have heavy optional dependencies (latex2sympy2, etc.)
+# that are not installed in the embodied-only venv.  Wrap in try-except so
+# subpackages like tmper can be imported without pulling in all deps.
+try:
+    from rlinf.algorithms.rewards.math import MathReward
+
+    register_reward("math", MathReward)
+except ImportError:
+    _logger.debug("MathReward not available (missing dependencies)")
+
+try:
+    from rlinf.algorithms.rewards.vqa import VQAReward
+
+    register_reward("vqa", VQAReward)
+except ImportError:
+    _logger.debug("VQAReward not available (missing dependencies)")
+
+try:
+    from rlinf.algorithms.rewards.code import CodeRewardOffline
+
+    register_reward("code_offline", CodeRewardOffline)
+except ImportError:
+    _logger.debug("CodeRewardOffline not available (missing dependencies)")
+
+try:
+    from rlinf.algorithms.rewards.searchr1 import SearchR1Reward
+
+    register_reward("searchr1", SearchR1Reward)
+except ImportError:
+    _logger.debug("SearchR1Reward not available (missing dependencies)")
+
+try:
+    from rlinf.algorithms.rewards.rstar2 import Rstar2Reward
+
+    register_reward("rstar2", Rstar2Reward)
+except ImportError:
+    _logger.debug("Rstar2Reward not available (missing dependencies)")

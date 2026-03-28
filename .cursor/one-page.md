@@ -73,7 +73,7 @@ Features:
 - 不涉及 VLM/LLM 的奖励生成方法
 - 不替换 SAC/PPO/GRPO 算法本身（仅增强其奖励信号）
 - 不修改 RLinf 核心调度/分布式逻辑
-- 不涉及多模态（图像/语言）输入的势能函数——本研究专注于底层连续状态输入
+- 不涉及语言条件输入的势能函数——势能函数基于视觉图像与本体感知状态，不使用语言指令
 
 ---
 
@@ -85,7 +85,7 @@ Features:
 |---|---------------|
 | C1 | 离线自监督——势能函数的训练不需要人工标量标注，仅需专家轨迹的时序顺序 |
 | C2 | 两阶段解耦——离线势能学习与在线 RL 完全解耦，势能网络在线阶段权重冻结，随着训练削减 |
-| C3 | 依赖本体状态，包括关节角，图片，不用上帝视角，例如物体位置，物体的加速度 |
+| C3 | 输入为视觉图像（机器人视角摄像头或固定视角摄像头）与本体感知状态（关节角度等），不使用上帝视角特权信息（如物体绝对位置、加速度） |
 | C4 | PBRS 理论保证——势能差分形式保证最优策略集不变 |
 | C5 | 基于排序学习而非回归——训练目标是相对排序而非绝对值预测 |
 
@@ -177,8 +177,34 @@ bash requirements/install.sh embodied --model openvla --env maniskill_libero --u
 - [x] 端到端冒烟测试通过：字段完整性、形状一致性、进度标签单调性、锚点正确性、traj_id 唯一性
 - [x] pre-commit (ruff lint + format) 通过
 
-### Milestone 2: 训练reward模块
+### Milestone 2: 训练势能模型 (Train Potential Model) [已完成]
 
+**目标**：训练参数化势能函数 $\Phi_\theta(s) \in (0, 1)$，在任意物理状态下输出单调反映任务完成度的标量分数，满足 PBRS 差分公式。
+
+**产出**：
+
+| 产出物 | 路径 | 说明 |
+|--------|------|------|
+| 扩展的数据管道 | `scripts/tmper/convert_h5_to_pkl.py` | 支持 `--rgb-h5-path` 存储 RGB 图像 |
+| 扩展的增广数据集 | `rlinf/data/rewind_augmentation.py` | 输出含 `images` 字段的增广轨迹 |
+| 势能网络定义 | `rlinf/algorithms/rewards/tmper/potential_net.py` | PotentialNetwork + 损失函数 + PotentialPairDataset |
+| 训练脚本 | `scripts/tmper/train_potential.py` | 离线自监督训练入口 |
+| 评估脚本 | `scripts/tmper/eval_potential.py` | 三项验收测试 + 势能曲线可视化 |
+| 模型 checkpoint | `data/checkpoints/tmper/potential_phi.pt` | 冻结权重（val pairwise acc 85.3%） |
+| 评估图表 | `data/eval/tmper/*.png` | 进度条测试、掉落测试、静止测试可视化 |
+| 详细设计文档 | `.cursor/docs/2-train-potential-model.md` | 含理论推导、网络架构、损失函数设计 |
+
+**进度**：
+
+- [x] 扩展数据管道：replay RGB 观测，修改 `convert_h5_to_pkl.py` 存储 `images` 字段
+- [x] 修改 `RewindAugmentedDataset` 支持 `images` 字段透传
+- [x] 实现 `PotentialNetwork`：LightweightImageEncoder64 (256d) + 状态 MLP (128d) + 融合头 → Sigmoid
+- [x] 实现三个损失函数：L_rank (时序比例排序)、L_bc (边界标定)、L_smooth (平滑约束)
+- [x] 实现 `PotentialPairDataset`：同轨迹内配对采样
+- [x] 实现训练脚本：train/val 轨迹级拆分、Adam 优化、best checkpoint 保存
+- [x] 实现评估脚本：进度条测试 (PASS)、掉落测试 (PASS)、静止测试 (PASS)
+- [x] 端到端冒烟测试通过
+- [x] pre-commit (ruff lint + format) 通过
 
 ### Milestone 3: 在线 PBRS 接入reward模块
 

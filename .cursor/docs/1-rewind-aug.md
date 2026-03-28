@@ -59,11 +59,13 @@
 
 # 开发文档：倒放增广模块使用教程
 
+> **模块状态**: 已完成（M1），并在 M2 中扩展支持 RGB 图像字段。
+
 本节介绍倒放增广数据管道的具体实现与使用方法。完整的管道分为三个阶段：
 
 1. **生成专家演示** — 使用 ManiSkill3 内置运动规划生成成功轨迹
-2. **格式转换** — 将 `.h5` 轨迹文件转换为逐条 `.pkl` 文件
-3. **倒放增广** — 对每条成功轨迹执行截断与翻转，生成带进度标签的增广数据集
+2. **格式转换** — 将 `.h5` 轨迹文件转换为逐条 `.pkl` 文件（支持 RGB 图像合并）
+3. **倒放增广** — 对每条成功轨迹执行截断与翻转，生成带进度标签的增广数据集（支持 images 字段）
 
 ## 快速开始
 
@@ -83,25 +85,34 @@ python -m mani_skill.trajectory.replay_trajectory \
   --traj-path data/demos/PickCube-v1/motionplanning/*.h5 \
   -o state --save-traj
 
-# 3. 将 h5 转换为 pkl
+# 3. 回放轨迹，提取 RGB 观测（M2 新增）
+python -m mani_skill.trajectory.replay_trajectory \
+  --traj-path data/demos/PickCube-v1/motionplanning/*.h5 \
+  -o rgb --save-traj
+
+# 4. 将 h5 转换为 pkl（合并 state + RGB）
 python scripts/tmper/convert_h5_to_pkl.py \
   --h5-path data/demos/PickCube-v1/motionplanning/*.state.*.h5 \
+  --rgb-h5-path data/demos/PickCube-v1/motionplanning/*.rgb.*.h5 \
   --output-dir data/demos/PickCube-v1/raw_pkl
 
-# 4. 构建增广数据集（在 Python 中使用）
+# 5. 构建增广数据集（在 Python 中使用）
 python -c "
 from rlinf.data.rewind_augmentation import RewindAugmentedDataset
 ds = RewindAugmentedDataset('data/demos/PickCube-v1/raw_pkl', num_augmentations=5, seed=42)
 print(f'增广后轨迹总数: {len(ds)}')
+print(f'含 images 字段: {\"images\" in ds[0]}')
 ds.save('data/demos/PickCube-v1/augmented')
 "
 
-# 5. 可视化某条增广轨迹
+# 6. 可视化某条增广轨迹
 python scripts/tmper/visualize_rewind.py \
   --raw-pkl data/demos/PickCube-v1/raw_pkl/traj_0.pkl \
   --aug-index 1 \
   --output data/demos/PickCube-v1/debug_rewind.mp4
 ```
+
+> **注意**：步骤 2 和 3 必须分别执行。ManiSkill3 的 `replay_trajectory` 不支持同时输出 state 和 rgb，它们会生成不同的 `.h5` 文件。步骤 4 中的 `--rgb-h5-path` 参数负责将两个 h5 文件的数据合并到同一个 pkl 中。
 
 ---
 
@@ -231,22 +242,33 @@ data/demos/PickCube-v1/motionplanning/
 
 该脚本读取回放后的 `.h5` 文件，将每条轨迹拆分为独立的 `.pkl` 文件。格式与 RLinf 的 `CollectEpisode`（`rlinf/envs/wrappers/collect_episode.py`）pickle 导出对齐，方便后续模块复用。
 
+#### 仅 state 模式（M1）
+
 ```bash
 python scripts/tmper/convert_h5_to_pkl.py \
   --h5-path data/demos/PickCube-v1/motionplanning/20260323_132703.state.pd_joint_pos.physx_cpu.h5 \
   --output-dir data/demos/PickCube-v1/raw_pkl
 ```
 
-**控制台输出示例：**
+#### state + RGB 模式（M2 新增）
+
+```bash
+python scripts/tmper/convert_h5_to_pkl.py \
+  --h5-path data/demos/PickCube-v1/motionplanning/<timestamp>.state.pd_joint_pos.physx_cpu.h5 \
+  --rgb-h5-path data/demos/PickCube-v1/motionplanning/<timestamp>.rgb.pd_joint_pos.physx_cpu.h5 \
+  --output-dir data/demos/PickCube-v1/raw_pkl
+```
+
+当提供 `--rgb-h5-path` 时，脚本从 RGB h5 的 `traj_{id}/obs/sensor_data/base_camera/rgb` 读取图像数据 `(T+1, 128, 128, 3)` uint8，存入 pkl 的 `"images"` 字段。
+
+> **重要**：state h5 和 RGB h5 的 `obs` 结构完全不同。state replay 的 `obs` 是平坦的 `(T+1, 42)` 数组，而 RGB replay 的 `obs` 是嵌套的 HDF5 group（包含 `sensor_data/base_camera/rgb`、`agent/qpos`、`extra/is_grasped` 等子节点）。因此必须分别 replay 并在 pkl 转换阶段合并。
+
+**控制台输出示例（含 RGB）：**
 
 ```
-  traj_0: T=74, state_dim=42, action_dim=8, success=True
-  traj_1: T=74, state_dim=42, action_dim=8, success=True
-  traj_2: T=50, state_dim=42, action_dim=8, success=True
+  traj_0: T=74, state_dim=42, action_dim=8, success=True, img=(128, 128, 3)
+  traj_1: T=74, state_dim=42, action_dim=8, success=True, img=(128, 128, 3)
   ...
-  traj_9: T=84, state_dim=42, action_dim=8, success=True
-
-Converted 10 trajectories to data/demos/PickCube-v1/raw_pkl
 ```
 
 **输出目录结构：**
@@ -278,11 +300,13 @@ data/demos/PickCube-v1/raw_pkl/
         "actors/cube":              ndarray (T+1, 13),
         "actors/goal_site":         ndarray (T+1, 13),
         "articulations/panda":      ndarray (T+1, 31),
-    }
+    },
+    # M2 新增（仅当使用 --rgb-h5-path 时存在）：
+    "images":       [img_0, img_1, ..., img_T],     # list, 长度 T+1, 每个元素为 ndarray (128, 128, 3) uint8
 }
 ```
 
-`observations` 的长度始终比 `actions` 多 1，因为第 0 帧是 `env.reset()` 返回的初始观测。
+`observations` 和 `images` 的长度始终比 `actions` 多 1，因为第 0 帧是 `env.reset()` 返回的初始观测。
 
 ---
 
@@ -357,6 +381,7 @@ print(len(ds))  # 60 = 10 条原始 × (1 原始 + 5 增广)
 | 字段 | 类型 | 形状 | 说明 |
 |------|------|------|------|
 | `states` | `torch.float32` | `[L, 42]` | 本体感知状态序列 |
+| `images` | `torch.uint8` | `[L, 128, 128, 3]` | RGB 图像序列（仅当原始 pkl 含 `images` 字段时存在）**M2 新增** |
 | `actions` | `torch.float32` | `[L-1, 8]` | 动作序列 |
 | `rewards` | `torch.float32` | `[L-1]` | 稀疏奖励 |
 | `terminated` | `torch.bool` | `[L-1]` | 终止标志 |
@@ -367,7 +392,9 @@ print(len(ds))  # 60 = 10 条原始 × (1 原始 + 5 增广)
 | `is_success_anchor` | `torch.bool` | `[L]` | 仅原始轨迹的最后一帧为 True |
 | `traj_id` | `int` | 标量 | 全局唯一轨迹标识符 |
 
-**`states` 与 `actions` 的对齐关系：** `states` 有 L 帧，`actions` 有 L-1 帧。`states[t]` 是执行 `actions[t]` 前的状态，`states[t+1]` 是执行后的状态。`progress_step` 与 `states` 长度相同（L 帧）。
+**`states`、`images` 与 `actions` 的对齐关系：** `states` 和 `images` 均有 L 帧，`actions` 有 L-1 帧。`states[t]`/`images[t]` 是执行 `actions[t]` 前的状态/图像，`states[t+1]`/`images[t+1]` 是执行后的状态/图像。`progress_step` 与 `states` 长度相同（L 帧）。
+
+**图像在增广中的处理：** 图像与状态使用完全相同的切片和翻转逻辑。前向段的图像按时间顺序排列，倒放段的图像按时间逆序排列。`_to_numpy_uint8()` 确保图像始终以 `uint8` 格式存储以节省内存。
 
 **持久化到磁盘：**
 
@@ -445,16 +472,30 @@ Progress sequence: [1, 2, ..., 34, 33, 32, ..., 6]
 
 ```
 scripts/tmper/
-├── convert_h5_to_pkl.py          # H5 → PKL 格式转换
-└── visualize_rewind.py           # 增广轨迹可视化（渲染 mp4）
+├── convert_h5_to_pkl.py          # H5 → PKL 格式转换（支持 --rgb-h5-path）
+├── visualize_rewind.py           # 增广轨迹可视化（渲染 mp4）
+├── train_potential.py            # M2: 势能网络离线训练
+└── eval_potential.py             # M2: 势能网络评估（三项验收测试）
 
 rlinf/data/
-└── rewind_augmentation.py        # 核心增广逻辑 + RewindAugmentedDataset
+└── rewind_augmentation.py        # 核心增广逻辑 + RewindAugmentedDataset（支持 images 字段）
+
+rlinf/algorithms/rewards/tmper/
+├── __init__.py                   # M2: 模块导出
+└── potential_net.py              # M2: PotentialNetwork + 损失函数 + PotentialPairDataset
 
 data/demos/PickCube-v1/           # 生成的数据（已 gitignore）
-├── motionplanning/               #   运动规划原始 h5 + 回放后 h5
-├── raw_pkl/                      #   逐条轨迹 pkl（含 env_states）
+├── motionplanning/               #   运动规划原始 h5 + state/rgb 回放后 h5
+├── raw_pkl/                      #   逐条轨迹 pkl（含 env_states + images）
 └── augmented/                    #   增广后的 pkl（不含 env_states）
+
+data/checkpoints/tmper/           # M2: 训练好的势能网络权重
+└── potential_phi.pt
+
+data/eval/tmper/                  # M2: 评估输出图表
+├── test1_progress_bar.png
+├── test2_drop_test.png
+└── test3_idle_test.png
 ```
 
 ---
@@ -462,6 +503,8 @@ data/demos/PickCube-v1/           # 生成的数据（已 gitignore）
 ## 注意事项
 
 - **obs_mode 选择**：运动规划阶段使用 `--obs-mode none` 以减小文件体积，然后通过 `replay_trajectory` 按需提取所需的观测模式（`state`、`rgb` 等）。
-- **T+1 与 T 的对齐**：observations/states 始终比 actions 多一帧。`states[0]` 是初始观测，`actions[0]` 是第一步动作，`states[1]` 是执行后的观测。
+- **state 和 RGB 必须分别 replay**：`replay_trajectory` 的 `-o state` 和 `-o rgb` 会产生不同结构的 h5 文件（flat array vs nested group），不能在同一次 replay 中同时获取。使用 `convert_h5_to_pkl.py --rgb-h5-path` 合并两者。
+- **T+1 与 T 的对齐**：observations/states/images 始终比 actions 多一帧。`states[0]`/`images[0]` 是初始观测，`actions[0]` 是第一步动作，`states[1]`/`images[1]` 是执行后的观测。
 - **env_states 不进入增广数据集**：`env_states` 体积较大且与增广索引存在冗余。可视化工具通过 `progress_step - 1` 索引原始 pkl 中的 `env_states` 来恢复物理状态。
 - **可逆性假设**：倒放增广假设状态转移在运动学上可逆。对于 `PickCube`、`StackCube` 等抓取放置类任务，倒放后的轨迹（放下→松手→远离）在物理上是合理的。对于切割、倾倒等不可逆操作，不适用本方法。
+- **图像内存估算**：60 条增广轨迹 × ~50 帧/条 × 48KB/帧（128×128×3 uint8）≈ 144MB，完全可控。增广过程中图像以 `uint8` 存储，不做浮点转换，以节省内存。
