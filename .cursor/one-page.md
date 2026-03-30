@@ -133,7 +133,7 @@ Features:
 | I4 | 高势能区静态惩罚可能与 SAC 熵正则产生冲突 | Technical | D4 | 中 |
 | I5 | 基线对比的公平性：ReWiND 用图像+语言，GCR 用 VIP 骨干，本方法用底层状态 | Experimental | D5 | 高 |
 | I6 | 任务选取需要平衡"足够长程"与"状态空间连续可逆"两个约束 | Experimental | D2 | 中 |
-| I7 | 超参数敏感性：缩放系数 $c$、$\gamma$、三个损失项权重需要仔细调优 | Technical | C5 | 中 |
+| I7 | 超参数敏感性：缩放系数 $c$、$\gamma$、三个损失项权重需要仔细调优（M2 已通过 48 组网格搜索缓解） | Technical | C5 | 中→低 |
 
 ---
 
@@ -190,9 +190,10 @@ bash requirements/install.sh embodied --model openvla --env maniskill_libero --u
 | 势能网络定义 | `rlinf/algorithms/rewards/tmper/potential_net.py` | PotentialNetwork + 损失函数 + PotentialPairDataset |
 | 训练脚本 | `scripts/tmper/train_potential.py` | 离线自监督训练入口 |
 | 评估脚本 | `scripts/tmper/eval_potential.py` | 三项验收测试 + 势能曲线可视化 |
-| 模型 checkpoint | `data/checkpoints/tmper/potential_phi.pt` | 冻结权重（val pairwise acc 85.3%） |
+| 超参搜索脚本 | `scripts/tmper/sweep_potential.py` | 48 组网格搜索，输出 CSV + 逐配置势能曲线图 |
+| 模型 checkpoint | `data/checkpoints/tmper/potential_phi.pt` | 冻结权重（val pairwise acc 91%，调优后超参 c=1.0, λs=3.0, lr=5e-4） |
 | 评估图表 | `data/eval/tmper/*.png` | 进度条测试、掉落测试、静止测试可视化 |
-| 详细设计文档 | `.cursor/docs/2-train-potential-model.md` | 含理论推导、网络架构、损失函数设计 |
+| 详细设计文档 | `.cursor/docs/2-train-potential-model.md` | 含理论推导、网络架构、损失函数设计、超参调优记录 |
 
 **进度**：
 
@@ -203,6 +204,7 @@ bash requirements/install.sh embodied --model openvla --env maniskill_libero --u
 - [x] 实现 `PotentialPairDataset`：同轨迹内配对采样
 - [x] 实现训练脚本：train/val 轨迹级拆分、Adam 优化、best checkpoint 保存
 - [x] 实现评估脚本：进度条测试 (PASS)、掉落测试 (PASS)、静止测试 (PASS)
+- [x] 超参数调优：48 组网格搜索定位最优 c=1.0, λ_smooth=3.0, lr=5e-4，消除阶跃行为
 - [x] 端到端冒烟测试通过
 - [x] pre-commit (ruff lint + format) 通过
 

@@ -20,7 +20,6 @@ from __future__ import annotations
 import argparse
 import csv
 import itertools
-import json
 import os
 import pickle
 import time
@@ -42,25 +41,6 @@ from rlinf.algorithms.rewards.tmper.potential_net import (
     smoothness_loss,
 )
 from rlinf.data.rewind_augmentation import rewind_augment_trajectory
-
-LOG_PATH = "/root/RLinf/.cursor/debug-3f53a4.log"
-
-
-def debug_log(hypothesis_id: str, location: str, message: str, data: dict):
-    """Append one NDJSON line to the debug log file."""
-    # #region agent log
-    entry = {
-        "sessionId": "3f53a4",
-        "id": f"log_{int(time.time() * 1000)}_{hypothesis_id}",
-        "timestamp": int(time.time() * 1000),
-        "location": location,
-        "message": message,
-        "data": data,
-        "hypothesisId": hypothesis_id,
-    }
-    with open(LOG_PATH, "a") as f:
-        f.write(json.dumps(entry) + "\n")
-    # #endregion
 
 
 def load_raw_trajectories(data_dir: str):
@@ -267,25 +247,6 @@ def train_one_config(
             epoch_correct += (phi_v > phi_u).sum().item()
             epoch_total += phi_v.shape[0]
 
-            # #region agent log
-            if epoch == 0:
-                margin_vals = config["c"] * (prog_v - prog_u).float() / max_prog.float()
-                debug_log(
-                    "H1",
-                    "sweep_potential.py:train_one_config",
-                    f"margin_stats run={run_name}",
-                    {
-                        "margin_mean": float(margin_vals.mean()),
-                        "margin_max": float(margin_vals.max()),
-                        "margin_min": float(margin_vals.min()),
-                        "phi_diff_mean": float((phi_v - phi_u).mean()),
-                        "phi_diff_max": float((phi_v - phi_u).max()),
-                        "c": config["c"],
-                        "run": run_name,
-                    },
-                )
-            # #endregion
-
         n_batches = max(1, len(train_loader))
         train_acc = epoch_correct / max(1, epoch_total)
         val_metrics = evaluate_model(model, val_loader, device, config["c"])
@@ -333,26 +294,6 @@ def train_one_config(
                 f"S={epoch_smooth / n_batches:.4f}] | "
                 f"tacc={train_acc:.3f} vacc={val_metrics['val_pairwise_acc']:.3f}"
             )
-
-    # #region agent log
-    debug_log(
-        "H1",
-        "sweep_potential.py:train_one_config:end",
-        f"training_complete run={run_name}",
-        {
-            "run": run_name,
-            "best_val_acc": best_val_acc,
-            "best_epoch": best_epoch,
-            "final_loss": loss_history[-1]["loss"],
-            "final_rank": loss_history[-1]["rank"],
-            "final_bc": loss_history[-1]["bc"],
-            "final_smooth": loss_history[-1]["smooth"],
-            "c": config["c"],
-            "lambda_smooth": config["lambda_smooth"],
-            "lr": config["lr"],
-        },
-    )
-    # #endregion
 
     return {
         "run_name": run_name,
@@ -405,28 +346,6 @@ def eval_and_plot(
     phi_max_jump = float(np.max(np.abs(diffs))) if len(diffs) > 0 else 0.0
 
     smoothness_score = 1.0 / (1.0 + phi_std_diff * 100)
-
-    # #region agent log
-    debug_log(
-        "H2",
-        "sweep_potential.py:eval_and_plot",
-        f"eval_metrics run={run_name}",
-        {
-            "run": run_name,
-            "monotonicity": monotonicity,
-            "phi_range": phi_range,
-            "phi_start": float(phi[0]),
-            "phi_end": float(phi[-1]),
-            "real_violations": real_violations,
-            "smoothness_score": smoothness_score,
-            "phi_std_diff": phi_std_diff,
-            "phi_max_jump": phi_max_jump,
-            "c": config["c"],
-            "lambda_smooth": config["lambda_smooth"],
-            "lr": config["lr"],
-        },
-    )
-    # #endregion
 
     # --- Plot ---
     config_str = (

@@ -119,9 +119,18 @@
 
 - **Boundary calibration converges fast**: `L_bc` drops to near 0 within the first 5 epochs. The ranking loss `L_rank` drives the remaining training.
 - **Model learns S-shaped potential curve**: On PickCube-v1, the first ~15 frames (approach) stay near 0, frames 15-30 (grasp) rise sharply, and frames 30+ (lift) saturate near 1. This matches the physical task structure.
-- **85% val pairwise accuracy is achievable with 10 trajectories**: With 8 train / 2 val split, `num_augmentations=5`, 200 epochs, best val pairwise accuracy reaches ~85%. This is sufficient for all three acceptance tests to pass.
+- **91% val pairwise accuracy is achievable with 10 trajectories**: With 8 train / 2 val split, `num_augmentations=5`, 200 epochs, and tuned hyperparameters (`c=1.0, lambda_smooth=3.0, lr=5e-4`), best val acc reaches ~0.91.
 - **Training takes ~5 min on single GPU**: 200 epochs × ~1.3s/epoch on CUDA with batch_size=64.
 - **Evaluation eps=1e-3 tolerance**: Test 1 (progress bar) uses eps=1e-3 to distinguish real monotonicity violations from sigmoid saturation noise. With this tolerance, trained models achieve 0 real violations on in-distribution trajectories.
+
+### Potential Network Hyperparameter Tuning (Sweep Results)
+
+- **Root cause of step-function behavior**: Large margin coefficient `c` creates ranking-loss margin targets (up to `c × 1.0`) that exceed the sigmoid output range (0,1). With `c=5.0`, margin targets reach 3-4, forcing the network to saturate the sigmoid at its extremes (0 or 1), producing a binary step function instead of a smooth curve.
+- **Optimal hyperparameters**: `c=1.0, lambda_smooth=3.0, lr=5e-4` — achieves perfect monotonicity (0 violations), smoothness_score=0.243, max_jump=0.164. This was the winning config from a 48-config grid sweep (`c ∈ {0.1,0.3,0.5,1.0,2.0,5.0} × lambda_smooth ∈ {0.1,0.5,1.0,3.0} × lr ∈ {5e-4,1e-3}`).
+- **lambda_smooth is the dominant smoothness lever**: Increasing `lambda_smooth` from 0.1 to 3.0 improves smoothness by 55-83% across all `c` values. Effect of `c` and `lr` is secondary.
+- **c should be ≤ 1.0**: With `c ∈ {0.1, 0.3, 0.5, 1.0}`, margin targets stay within (0,1), preventing sigmoid saturation. `c=1.0` gives the best monotonicity; lower `c` values can produce slightly smoother but less monotonic curves.
+- **Saturation ceiling for vision-based models**: Even with optimal hyperparameters, the potential saturates near 1.0 after frame ~35 (out of 74 for PickCube-v1). The CNN cannot reliably distinguish fine height differences during the lifting phase. This is a data/model capacity limitation, not a hyperparameter issue.
+- **Sweep script**: `scripts/tmper/sweep_potential.py` — trains all configs sequentially, saves per-config `*_progress.png` plots and `sweep_results.csv` summary. Use for future hyperparameter exploration.
 
 ### SAC Training in RLinf
 
@@ -190,7 +199,9 @@ data/eval/tmper/                        # Evaluation plots (gitignored)
 - **Do not split train/val after augmentation** — augmented copies share base trajectory data, causing data leakage. Always split raw pkl files first, then augment each subset independently.
 - **Do not expect strict float32 monotonicity in sigmoid-saturated regions** — PotentialNetwork outputs near 0 and 1 have tiny violations (1e-5 to 1e-8) due to float32 precision. Use eps=1e-3 tolerance when checking monotonicity.
 - **Do not run long training scripts without `PYTHONUNBUFFERED=1`** — Python buffers stdout when not connected to a TTY, making monitoring impossible.
+- **Do not set margin coefficient c > 1.0** — values like `c=5.0` create ranking loss margins exceeding the (0,1) sigmoid range, forcing the network into a binary step function. Keep `c ≤ 1.0`.
+- **Do not confuse CLI flag names across scripts** — `train_potential.py` uses `--output-dir`, `eval_potential.py` uses `--checkpoint` and `--output-dir`. Always verify argparse definitions before composing multi-script commands.
 
 ---
 
-*Last updated: 2026-03-28 — Milestone 2 (Train Potential Model) complete. Memory consolidation applied.*
+*Last updated: 2026-03-28 — Milestone 2 (Train Potential Model) complete. Hyperparameter sweep debugged step-function behavior; optimal params: c=1.0, λ_smooth=3.0, lr=5e-4.*

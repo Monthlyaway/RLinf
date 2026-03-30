@@ -206,18 +206,97 @@ $$\mathcal{L}_{\text{smooth}} = \mathbb{E}_{\mid P_{u} - P_{v} \mid = 1}\left\lb
 
 **在 rewind 边界的行为**：Smooth loss 条件 $|P_u - P_v| = 1$ 在 forward→rewind 转折点也会触发（例如 forward 末尾 P=35 与 rewind 开头 P=34）。这是正确行为——转折点的相邻帧在物理上确实相邻（对应同一段 env\_state），势能应该平滑过渡。
 
-### 3.5 训练流程
+### 3.5 超参数与 Sigmoid 饱和：为什么 $c$ 过大导致阶跃函数
+
+本节从数学上解释为什么初始超参（$c=5.0$, $\lambda_{smooth}=0.1$）会使势能曲线退化为 0→1 阶跃函数，以及为什么调整至 $c=1.0$, $\lambda_{smooth}=3.0$ 后曲线变为平滑 S 形。
+
+#### 3.5.1 问题的数学根源
+
+回顾 ranking loss 中的动态 margin：
+
+$$m(u,v) = c \cdot \frac{|P_v - P_u|}{T_{\max}}$$
+
+该 margin 定义了网络在状态对 $(s_u, s_v)$ 上需要拉开的最小势能差。ranking loss 可以展开为：
+
+$$\mathcal{L}_{\text{rank}} = -\log\sigma\left(\underbrace{\Phi_\theta(s_v) - \Phi_\theta(s_u)}_{\Delta\Phi} - m(u,v)\right)$$
+
+为使该 loss 趋近 0，需要 $\sigma(\cdot)$ 的参数为大正数，即：
+
+$$\Delta\Phi \gg m(u,v) \quad \Longrightarrow \quad \Phi_\theta(s_v) - \Phi_\theta(s_u) \gg c \cdot \frac{|P_v - P_u|}{T_{\max}}$$
+
+但 $\Phi_\theta$ 的输出经 Sigmoid 激活，值域被约束在 $(0, 1)$，因此 $\Delta\Phi$ 有硬性上界：
+
+$$\Delta\Phi_{\max} = \Phi_\theta(s_v)_{\max} - \Phi_\theta(s_u)_{\min} < 1 - 0 = 1$$
+
+#### 3.5.2 c = 5.0 时的不可能约束
+
+当 $c = 5.0$ 时，考虑一对相距较远的状态（如 $|P_v - P_u| = 60$，$T_{\max} = 75$）：
+
+$$m(u,v) = 5.0 \times \frac{60}{75} = 4.0$$
+
+此时 ranking loss 要求：
+
+$$\Phi_\theta(s_v) - \Phi_\theta(s_u) \gg 4.0$$
+
+但 $\Delta\Phi < 1$，这在数学上不可能满足。网络面临 $\Delta\Phi \geq 4.0$ 的约束，而其输出范围仅为 $(0, 1)$。
+
+**网络的唯一选择**：为了尽可能最小化 loss，网络被迫将 Sigmoid 推向极端饱和——对所有"早期"状态输出 $\Phi \approx 0$（Sigmoid 输入 $z \ll 0$），对所有"晚期"状态输出 $\Phi \approx 1$（Sigmoid 输入 $z \gg 0$）。两者之间的过渡被压缩到极少的帧数内（3-4 帧），形成阶跃函数。
+
+用数学语言概括：当 $c \cdot \frac{|P_v - P_u|}{T_{\max}} > 1$ 对大量采样对成立时，ranking loss 在整个可行域上均有大正值梯度，持续将网络推向二值化极端。
+
+#### 3.5.3 c = 1.0 时的可满足约束
+
+当 $c = 1.0$ 时，同一对状态的 margin 变为：
+
+$$m(u,v) = 1.0 \times \frac{60}{75} = 0.8$$
+
+此时：
+
+$$\Delta\Phi \geq 0.8 \quad \text{（可满足，因为 } \Delta\Phi_{\max} \approx 1.0\text{）}$$
+
+对于更近的状态对（如 $|P_v - P_u| = 10$）：
+
+$$m(u,v) = 1.0 \times \frac{10}{75} \approx 0.133$$
+
+网络只需在这对状态间拉开 0.133 的势能差，Sigmoid 无需饱和即可轻松满足。这使得网络可以学习一条**渐进的 S 形曲线**：在整个轨迹范围内均匀分配势能增量，而非将全部变化压缩在几帧内。
+
+#### 3.5.4 $\lambda_{smooth}$ 的对抗作用
+
+仅降低 $c$ 是必要条件但不充分。当 $\lambda_{smooth}$ 过小（如 0.1）时，smoothness loss 的梯度贡献被 ranking loss 压倒：
+
+$$\nabla_\theta \mathcal{L} = \lambda_{rank}\nabla_\theta \mathcal{L}_{\text{rank}} + \lambda_{smooth}\nabla_\theta \mathcal{L}_{\text{smooth}} + \cdots$$
+
+在 $\lambda_{rank}=1.0$, $\lambda_{smooth}=0.1$ 的配比下，即使 $c=1.0$，ranking loss 仍可能驱动网络在某个区间集中分配势能增量（形成较陡的 S 形），因为 ranking loss 不关心增量是否均匀——它只关心大小关系。
+
+将 $\lambda_{smooth}$ 提升至 3.0 后，smoothness loss 的梯度贡献超过 ranking loss。它惩罚任何相邻帧间的大势能跳变 $(\Phi_{t+1} - \Phi_t)^2$，迫使网络将势能变化分散到更多帧上。ranking loss 保证总体方向正确（后面的帧势能更高），smoothness loss 保证过渡是渐进的。
+
+#### 3.5.5 超参搜索的实证验证
+
+48 组网格搜索（$c \times \lambda_{smooth} \times lr$）的实验结果定量验证了上述分析：
+
+| 配置 | max\_jump | 效果 | 数学解释 |
+|------|-----------|------|----------|
+| c=5.0, λs=0.1 | 0.392 | 3 帧阶跃 | margin 最大 4.0 >> $\Delta\Phi_{\max}$，被迫饱和 |
+| c=1.0, λs=0.1 | 0.284 | 较陡 S 形 | margin ≤ 1.0 可满足，但无足够平滑约束 |
+| c=5.0, λs=3.0 | 0.170 | 中等 S 形 | 饱和压力仍在，但 smooth loss 部分抵消 |
+| c=1.0, λs=3.0 | **0.164** | **平滑 S 形** | margin 可满足 + smooth loss 均匀化增量 |
+
+**核心结论**：$c \leq 1.0$ 是消除阶跃的**必要条件**（解除不可能约束），$\lambda_{smooth} \geq 3.0$ 是实现平滑的**充分条件**（均匀化势能增量）。两者缺一不可。
+
+---
+
+### 3.6 训练流程
 
 #### 超参数
 
 | 参数 | 值 | 理由 |
 |------|----|------|
-| $c$（margin 缩放系数） | 5.0 | $m = 5/T_{max}$；$T_{max} \approx 75$ 时 $m \approx 0.067$/step，落在 Sigmoid 敏感区 |
+| $c$（margin 缩放系数） | 1.0 | 经超参搜索确定。$c \leq 1.0$ 保证 margin 目标不超出 sigmoid (0,1) 范围，避免二值阶跃 |
 | $\lambda_{rank}$ | 1.0 | 主损失 |
 | $\lambda_{bc}$ | 1.0 | 边界锚定同等重要 |
-| $\lambda_{smooth}$ | 0.1 | 辅助约束，不应压制 ranking 信号 |
+| $\lambda_{smooth}$ | 3.0 | 经超参搜索确定。从 0.1→3.0 可提升平滑度 55-83%，是平滑性最关键的杠杆 |
 | 优化器 | Adam | 标准选择 |
-| 学习率 | 1e-3 | CNN + MLP 联合训练 |
+| 学习率 | 5e-4 | 经超参搜索确定。比 1e-3 略保守，避免过早收敛至阶跃解 |
 | batch size | 64 pairs | 每 batch 从多条轨迹采样 |
 | epochs | 200 | 小数据集需要多轮迭代 |
 | pairs/traj/epoch | 50 | 每条轨迹每 epoch 采样 50 个状态对 |
@@ -395,7 +474,8 @@ scripts/tmper/
 ├── convert_h5_to_pkl.py          # [修改] 增加 RGB 图像存储
 ├── visualize_rewind.py           # [不变] 增广轨迹可视化
 ├── train_potential.py            # [新增] 势能网络离线训练入口
-└── eval_potential.py             # [新增] 势能曲线可视化评估
+├── eval_potential.py             # [新增] 势能曲线可视化评估
+└── sweep_potential.py            # [新增] 超参数网格搜索
 
 rlinf/algorithms/rewards/tmper/
 ├── __init__.py                   # [新增] 模块注册
@@ -487,8 +567,7 @@ python scripts/tmper/convert_h5_to_pkl.py \
 # 4. 训练势能网络（200 epochs，~5 min on GPU）
 PYTHONUNBUFFERED=1 python scripts/tmper/train_potential.py \
   --data-dir data/demos/PickCube-v1/raw_pkl \
-  --output-dir data/checkpoints/tmper \
-  --epochs 200 --batch-size 64 --lr 1e-3
+  --output-dir data/checkpoints/tmper
 
 # 5. 评估（三项验收测试 + 曲线图）
 python scripts/tmper/eval_potential.py \
@@ -545,10 +624,10 @@ phi = model(images, states)
         "image_size": 64,
         "latent_dim": 256,
         "state_latent_dim": 128,
-        "c": 5.0,                            # 训练超参，加载模型时需过滤
+        "c": 1.0,                            # 训练超参，加载模型时需过滤
         "lambda_rank": 1.0,
         "lambda_bc": 1.0,
-        "lambda_smooth": 0.1,
+        "lambda_smooth": 3.0,
     }
 }
 ```
@@ -598,16 +677,19 @@ __getitem__(idx):
 
 | Epoch | L_rank | L_bc | L_smooth | Train Acc | Val Acc |
 |-------|--------|------|----------|-----------|---------|
-| 1 | ~1.8 | ~0.5 | ~0.01 | ~50% | ~50% |
-| 10 | ~0.9 | ~0.02 | ~0.003 | ~75% | ~70% |
-| 50 | ~0.4 | ~0.001 | ~0.001 | ~88% | ~82% |
-| 200 | ~0.3 | ~0.0001 | ~0.0005 | ~92% | ~85% |
+| 1 | ~0.75 | ~0.23 | ~0.001 | ~79% | ~78% |
+| 10 | ~0.63 | ~0.00 | ~0.002 | ~89% | ~84% |
+| 50 | ~0.63 | ~0.00 | ~0.002 | ~89% | ~86% |
+| 100 | ~0.63 | ~0.00 | ~0.002 | ~90% | ~89% |
+| 200 | ~0.63 | ~0.00 | ~0.002 | ~89% | ~87% |
+
+> 以上数值基于调优后的超参（c=1.0, λ_smooth=3.0, lr=5e-4），最佳 val acc 约 91%（epoch ~80）。
 
 关键观察：
 - `L_bc` 收敛最快（~5 epochs 即降至 <0.01），因为只需将两个锚点推到 0 和 1
-- `L_rank` 持续缓慢下降，是主要的训练驱动力
-- `L_smooth` 始终很小（<0.01），不会对主损失形成干扰
-- 验证集准确率比训练集低 ~5-7%，在合理过拟合范围内
+- `L_rank` 持续缓慢下降至 ~0.63 附近震荡，是主要的训练驱动力
+- `L_smooth` 始终很小（<0.002），经 λ_smooth=3.0 加权后约 0.006，对总损失有适度贡献
+- 验证集准确率比训练集低 ~3-5%，在合理过拟合范围内
 
 ## 评估脚本使用指南
 
@@ -644,6 +726,48 @@ python scripts/tmper/eval_potential.py --traj-index 0
 - 输出 `test3_idle_test.png`：势能曲线 + 均值 ± 标准差带
 - **通过标准**：std < 0.05
 
+## 超参数调优：从阶跃函数到平滑 S 曲线
+
+### 问题现象
+
+初始超参（c=5.0, λ_smooth=0.1, lr=1e-3）训练出的势能函数呈现**二值阶跃行为**：在约 frame 20 处从 ~0 急剧跳变至 ~1（3-4 帧内完成），此后长期饱和在 1.0。max_jump 达 0.39，形似 step function 而非连续进度指标。
+
+### 根因分析
+
+**核心问题在 margin 缩放系数 c**。ranking loss 中的动态 margin 为 $m(u,v) = c \cdot |P_v - P_u| / T_{max}$。当 c=5.0 且 $|P_v - P_u|$ 较大时（如相隔 60 帧的一对），margin 目标可达 $5 \times 60/75 = 4.0$。但 sigmoid 输出 $\Phi \in (0,1)$，$\Phi_v - \Phi_u$ 的理论上限为 1.0。网络面临 $\Phi_v - \Phi_u \geq 4.0$ 的不可能约束，只能将 sigmoid 推向极端饱和（全 0 或全 1），形成阶跃。
+
+### 超参搜索
+
+使用 `scripts/tmper/sweep_potential.py` 进行 48 组网格搜索：
+
+```
+c ∈ {0.1, 0.3, 0.5, 1.0, 2.0, 5.0}
+λ_smooth ∈ {0.1, 0.5, 1.0, 3.0}
+lr ∈ {5e-4, 1e-3}
+```
+
+关键发现：
+
+| 排名 | 配置 | 单调性 | 平滑度 | 违反数 | 最大跳变 |
+|------|------|--------|--------|--------|----------|
+| 1 | c=1.0, λs=3.0, lr=5e-4 | **1.000** | 0.243 | **0** | 0.164 |
+| 2 | c=0.1, λs=3.0, lr=5e-4 | 0.973 | **0.271** | 2 | 0.106 |
+| 3 | c=0.5, λs=3.0, lr=5e-4 | 0.986 | 0.267 | 1 | 0.123 |
+| ... | c=5.0, λs=0.1, lr=1e-3 | 1.000 | 0.145 | 0 | **0.392** |
+
+### 调优结论
+
+1. **c ≤ 1.0 是硬性约束**：保证 margin 目标不超出 sigmoid 可表达范围，避免二值饱和
+2. **λ_smooth 是平滑性最有效的杠杆**：0.1→3.0 在所有 c 值下均带来 55-83% 的平滑度提升
+3. **lr=5e-4 略优于 1e-3**：降低学习率可防止模型过早收敛到阶跃解
+4. **最优组合 c=1.0, λ_smooth=3.0, lr=5e-4**：唯一实现完美单调性（0 违反）且平滑 S 曲线跨越 ~20 帧的配置
+
+### 残留限制
+
+即使在最优超参下，势能函数在 frame ~35 后（74 帧中）饱和至 ~1.0。这是因为 PickCube-v1 的提升阶段在 CNN 可区分性上远弱于抓取阶段——不同高度的视觉差异极小。此为模型表征能力的固有限制，非超参问题。
+
+---
+
 ## 实现中遇到的问题与解决方案
 
 ### 1. 依赖冲突：latex2sympy2 未安装
@@ -675,3 +799,11 @@ python scripts/tmper/eval_potential.py --traj-index 0
 **根因**：Sigmoid 函数在接近 0 和 1 的饱和区域，float32 精度不足以表达微小差异。
 
 **修复**：在 `test_progress_bar` 中引入 `eps=1e-3` 容差，区分"real violations"和"noise violations"。
+
+### 5. 势能函数呈阶跃函数而非平滑曲线
+
+**症状**：势能曲线在约 frame 20 处从 ~0 急剧跳变至 ~1（3-4 帧内完成），随后长期饱和。进度条看起来像开关量，而非连续进度条。
+
+**根因**：margin 缩放系数 c=5.0 导致 ranking loss 的 margin 目标远超 sigmoid (0,1) 输出范围（最高达 4.0），迫使网络将 sigmoid 推向极端饱和。同时 λ_smooth=0.1 太弱，无法对抗 ranking loss 的二值化压力。
+
+**修复**：通过 48 组超参网格搜索（`scripts/tmper/sweep_potential.py`），将默认超参修改为 c=1.0, λ_smooth=3.0, lr=5e-4。势能曲线从 3 帧阶跃改善为 ~20 帧的平滑 S 曲线，max_jump 从 0.39 降至 0.16，单调性违反数降为 0。详见上方"超参数调优"章节。
