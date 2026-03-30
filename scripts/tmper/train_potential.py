@@ -333,13 +333,13 @@ def main():
     )
     parser.add_argument("--epochs", type=int, default=200)
     parser.add_argument("--batch-size", type=int, default=64)
-    parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--lr", type=float, default=5e-4)
     parser.add_argument(
-        "--c", type=float, default=5.0, help="Margin scaling coefficient"
+        "--c", type=float, default=1.0, help="Margin scaling coefficient"
     )
     parser.add_argument("--lambda-rank", type=float, default=1.0)
     parser.add_argument("--lambda-bc", type=float, default=1.0)
-    parser.add_argument("--lambda-smooth", type=float, default=0.1)
+    parser.add_argument("--lambda-smooth", type=float, default=3.0)
     parser.add_argument("--num-augmentations", type=int, default=5)
     parser.add_argument("--val-ratio", type=float, default=0.2)
     parser.add_argument("--pairs-per-traj", type=int, default=50)
