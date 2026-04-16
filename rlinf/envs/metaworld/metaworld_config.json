@@ -173,5 +173,11 @@
           "door-lock-v3",
           "door-unlock-v3"
       ]
-    }
+    },
+    "CORE4": [
+      "button-press-v3",
+      "drawer-open-v3",
+      "sweep-into-v3",
+      "hammer-v3"
+    ]
 }

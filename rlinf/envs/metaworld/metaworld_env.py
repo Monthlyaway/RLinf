@@ -58,7 +58,8 @@ class MetaWorldEnv(gym.Env):
 
         self.RESET_STEP = 15
         self.task_suite: MetaWorldBenchmark = MetaWorldBenchmark(
-            self.cfg.task_suite_name
+            self.cfg.task_suite_name,
+            task_names=getattr(self.cfg, "task_names", None),
         )
         self.num_tasks = self.task_suite.get_num_tasks()
         self.task_num_trials = self.task_suite.get_task_num_trials()
@@ -70,6 +71,11 @@ class MetaWorldEnv(gym.Env):
 
         self.prev_step_reward = np.zeros(self.num_envs)
         self.use_rel_reward = cfg.use_rel_reward
+        self.reward_mode = getattr(cfg, "reward_mode", "success")
+        assert self.reward_mode in {"success", "raw"}, (
+            f"Unsupported reward_mode: {self.reward_mode}. "
+            "Supported values are {'success', 'raw'}."
+        )
 
         self._init_metrics()
         self._elapsed_steps = np.zeros(self.num_envs, dtype=np.int32)
@@ -113,11 +119,13 @@ class MetaWorldEnv(gym.Env):
     def get_env_fn_params(self, env_idx=None):
         env_fn_params = []
         task_descriptions = []
+        task_names = []
         if env_idx is None:
             env_idx = np.arange(self.num_envs)
         for env_id in range(self.num_envs):
             if env_id not in env_idx:
                 task_descriptions.append(self.task_descriptions[env_id])
+                task_names.append(self.task_names[env_id])
                 continue
             env_name = self.env_names_all[self.task_ids[env_id]]
             task_description = self.task_descriptions_all[self.task_ids[env_id]]
@@ -128,7 +136,9 @@ class MetaWorldEnv(gym.Env):
                 }
             )
             task_descriptions.append(task_description)
+            task_names.append(env_name)
         self.task_descriptions = task_descriptions
+        self.task_names = task_names
         return env_fn_params
 
     def _compute_total_num_group_envs(self):
@@ -266,6 +276,7 @@ class MetaWorldEnv(gym.Env):
         obs = {
             "main_images": full_image_tensor,
             "states": states,
+            "task_names": self.task_names,
             "task_descriptions": self.task_descriptions,
         }
         return obs
@@ -338,7 +349,7 @@ class MetaWorldEnv(gym.Env):
         truncations = self.elapsed_steps >= self.cfg.max_episode_steps
         obs = self._wrap_obs(raw_obs)
 
-        step_reward = self._calc_step_reward(terminations)
+        step_reward = self._calc_step_reward(_reward, terminations)
 
         infos = self._record_metrics(step_reward, terminations, infos)
         if self.ignore_terminations:
@@ -431,8 +442,11 @@ class MetaWorldEnv(gym.Env):
         infos["_elapsed_steps"] = dones
         return obs, infos
 
-    def _calc_step_reward(self, terminations):
-        reward = self.cfg.reward_coef * terminations
+    def _calc_step_reward(self, raw_reward, terminations):
+        if self.reward_mode == "raw":
+            reward = np.asarray(raw_reward, dtype=np.float32)
+        else:
+            reward = self.cfg.reward_coef * terminations
         reward_diff = reward - self.prev_step_reward
         self.prev_step_reward = reward
 

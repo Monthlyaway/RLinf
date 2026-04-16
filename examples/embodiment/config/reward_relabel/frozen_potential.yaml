@@ -1,0 +1,6 @@
+enabled: False
+combine_mode: add
+device: cpu
+gamma: ${algorithm.gamma}
+model_path: null
+normalization_stats_path: null

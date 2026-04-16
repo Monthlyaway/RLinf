@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from rlinf.envs.wrappers.collect_episode import CollectEpisode
-from rlinf.envs.wrappers.frozen_potential_reward import FrozenPotentialReward
-from rlinf.envs.wrappers.record_video import RecordVideo
+from rlinf.reward_relabel.frozen_potential import FrozenPotential, PotentialMLP
 
-__all__ = ["CollectEpisode", "FrozenPotentialReward", "RecordVideo"]
+__all__ = ["FrozenPotential", "PotentialMLP"]

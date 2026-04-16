@@ -22,7 +22,7 @@ from omegaconf import DictConfig
 from rlinf.data.embodied_io_struct import EnvOutput
 from rlinf.envs import get_env_cls
 from rlinf.envs.action_utils import prepare_actions
-from rlinf.envs.wrappers import RecordVideo
+from rlinf.envs.wrappers import FrozenPotentialReward, RecordVideo
 from rlinf.scheduler import Channel, Cluster, Worker
 from rlinf.utils.comm_mapping import CommMapper
 from rlinf.utils.placement import HybridComponentPlacement
@@ -132,6 +132,13 @@ class EnvWorker(Worker):
             )
             if env_cfg.video_cfg.save_video:
                 env = RecordVideo(env, env_cfg.video_cfg)
+            if getattr(self.cfg, "reward_relabel", None) and getattr(
+                self.cfg.reward_relabel, "enabled", False
+            ):
+                env = FrozenPotentialReward(
+                    env=env,
+                    reward_relabel_cfg=self.cfg.reward_relabel,
+                )
             if env_cfg.get("data_collection", None) and getattr(
                 env_cfg.data_collection, "enabled", False
             ):

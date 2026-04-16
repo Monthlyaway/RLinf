@@ -17,9 +17,10 @@ from rlinf.envs.metaworld.utils import load_prompt_from_json
 
 
 class MetaWorldBenchmark:
-    def __init__(self, task_suite_name):
+    def __init__(self, task_suite_name, task_names=None):
         assert task_suite_name in [
             "metaworld_50",
+            "metaworld_core4",
             "metaworld_45_ind",
             "metaworld_45_ood",
         ]
@@ -29,17 +30,37 @@ class MetaWorldBenchmark:
             config_path, "TASK_DESCRIPTIONS"
         )
         self.ML45_dict = load_prompt_from_json(config_path, "ML45")
+        self.core4_tasks = load_prompt_from_json(config_path, "CORE4")
+        self.task_names = list(task_names) if task_names else None
+        if self.task_names is not None:
+            unknown_tasks = [
+                task_name
+                for task_name in self.task_names
+                if task_name not in self.task_description_dict
+            ]
+            assert not unknown_tasks, (
+                f"Unknown MetaWorld tasks: {unknown_tasks}. "
+                f"Supported tasks: {list(self.task_description_dict.keys())}"
+            )
 
     def get_num_tasks(self):
+        if self.task_names is not None:
+            return len(self.task_names)
         if self.task_suite_name == "metaworld_50":
             return 50
+        elif self.task_suite_name == "metaworld_core4":
+            return len(self.core4_tasks)
         elif self.task_suite_name == "metaworld_45_ind":
             return 45
         elif self.task_suite_name == "metaworld_45_ood":
             return 5
 
     def get_task_num_trials(self):
+        if self.task_names is not None:
+            return 10
         if self.task_suite_name == "metaworld_50":
+            return 10
+        elif self.task_suite_name == "metaworld_core4":
             return 10
         elif self.task_suite_name == "metaworld_45_ind":
             return 10
@@ -47,8 +68,12 @@ class MetaWorldBenchmark:
             return 20
 
     def get_env_names(self):
+        if self.task_names is not None:
+            return self.task_names
         if self.task_suite_name == "metaworld_50":
             return list(self.task_description_dict.keys())
+        elif self.task_suite_name == "metaworld_core4":
+            return self.core4_tasks
         elif self.task_suite_name == "metaworld_45_ind":
             return self.ML45_dict["train"]
         elif self.task_suite_name == "metaworld_45_ood":
